@@ -2,11 +2,13 @@
 #define MAX_BIOZ_VALUES_H
 
 // ************************************************************
-// MAX DEFINED REGISTER VALUES
+// MAX 30009 DEFINED REGISTER VALUES
 // ************************************************************
 // Various default and configured register values for
-// capturing BioZ measurements with the MAX
-// Default values for MAX registers
+// capturing BioZ measurements with the MAX 30009
+// Default values for MAX 30009 registers
+//
+// 
 
 
 #define SYS_CONFIG_1 0x02

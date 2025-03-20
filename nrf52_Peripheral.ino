@@ -19,8 +19,8 @@
 
 // Modifiable message string
 String setupComplete = "Setup Complete!";  // Change this string to any message you want
-String startBurstMessage = "Burst Meas Start";  
-String endBurstMessage = "Burst Meas End";  
+String startMessage = "Begin MAX1";    
+String endMessage = "End MAX1";  
 
 #define MAX_PRPH_CONNECTION   2
 uint8_t connection_count = 0;
@@ -41,7 +41,7 @@ DateTime endBurst;
 RTC_DS3231 rtc;
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
-
+int priority = 1;
 
 // bioz_arduino.ino
 // Capture BIOZ data using MAX30001 and Arduino
@@ -65,8 +65,8 @@ char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursd
 
 
 // Define MAX30009/Xiao INT Pin Connection
-#define INT_PIN 1
-#define TRIG_PIN 2
+#define INT_PIN 2 // Use an interrupt-capable pin (D2)
+#define TRIG_PIN 1
 #define extLED 0
 
 #define AFE_FIFO_SIZE			256
@@ -107,6 +107,12 @@ volatile int32_t savedBiozResistance[9][6]; // Array for storing BIOZ read data 
                                             // First index tracks the frequency
                                             // Second index tracks the repeated measurement number
 volatile int32_t savedBiozReactance[9][6];
+
+uint8_t FIFOcount;
+
+volatile uint8_t rxByte[3];	// array to store register reads
+
+volatile bool interruptFlag = false; // Flag to indicate interrupt
 
 void setup() {
   Serial.begin(115200);
@@ -164,6 +170,8 @@ void setup() {
   //SPI.setBitOrder(MSBFIRST);  // Set bit order
   //Serial.begin(9600);
 
+  // Serial.println("Is Working Here?");
+
 
 // RTC Setup
   if (! rtc.begin()) {
@@ -175,6 +183,11 @@ void setup() {
   if (rtc.lostPower()) {
     Serial.println("RTC lost power, RTC needs a time reset");
   }
+
+  pinMode(INT_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(INT_PIN), handleInterrupt, FALLING); // Trigger on falling edge
+
+  // Serial.println("Is Working Here 1?");
 
 }
 
@@ -230,6 +243,7 @@ void printAll(uint8_t* buf, int count)
 
 void loop() {
 
+  // uint8_t buf[255];
   uint8_t buf[64];
   int count;
 
@@ -273,13 +287,18 @@ void loop() {
       // Serial.println(hexVal);
 
   //Serial.println("Working Here *2*");
+  // while (1) {
   while (bleuart.available()) {
+
+    delay(2000);
+
+    endCollection();
     // if the remote device wrote to the characteristic,
     // use the value to control the LED:
 
     Serial.println("BLEUART Available.");
 
-    // count = bleuart.read(buf, sizeof(buf));
+    count = bleuart.read(buf, sizeof(buf));
 
     // if(strncmp((char*)buf, "START", 5) == 0){
     //   // Delay to wait for enough input
@@ -289,6 +308,8 @@ void loop() {
     //int intState = digitalRead(INT_PIN);
     configureMAX_REGS(); // Configure REGS
     Serial.println("Regs Configured");
+    strncpy((char *)buf, setupComplete.c_str(), setupComplete.length());
+    printAll(buf, setupComplete.length());
 
     digitalWrite(ledPin, HIGH);  // LED OFF
     //digitalWrite(OUTPUT_PIN, LOW);  // LED OFF
@@ -321,11 +342,23 @@ void loop() {
     dataError = 0;
     //while (dataError != 1)
     //while (iterationCnt != 1)
-    while (1)
+    while (dataError != 1)
     {
-      getMeasurement();
+      if (interruptFlag) {
+        interruptFlag = false; // Reset the flag
+        Serial.println("INT Pin Active");
+        // Begin Data Collection
+        onAfeInt();
+        if(priority = 1){
+          printDataBluetooth(buf);
+        }
+        //printData(count);
+        iterationCnt += 1;
+      }
+      // getMeasurement();
       // printData();
-      printDataBluetooth(buf);
+
+
       // Serial.println("Press ENTER to continue, STOP to end.");
       // while (Serial.available() == 0) // Wait for UART to settle
       // ;
@@ -343,6 +376,8 @@ void loop() {
   digitalWrite(LED_BUILTIN, LOW);  
 
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////
 
   ////////////////////////////////
   // BlueTooth Helper Functions //
@@ -364,12 +399,12 @@ void connect_callback(uint16_t conn_handle)
   Serial.print("Connection count: ");
   Serial.println(connection_count);
   
-  // Keep advertising if not reaching max
-  if (connection_count < MAX_PRPH_CONNECTION)
-  {
-    Serial.println("Keep advertising");
-    Bluefruit.Advertising.start(0);
-  }
+  // // Keep advertising if not reaching max
+  // if (connection_count < MAX_PRPH_CONNECTION)
+  // {
+  //   Serial.println("Keep advertising");
+  //   Bluefruit.Advertising.start(0);
+  // }
 }
 
 /**
@@ -389,6 +424,8 @@ void disconnect_callback(uint16_t conn_handle, uint8_t reason)
 }
 
 
+//////////////////////////////////////////////////////////////////////////////////////////
+
 
 // HEX to uint8 Function
 uint8_t hexToUint8(String hexString) {
@@ -405,12 +442,12 @@ void uint32ToHex(uint32_t number, char* hexString) {
 
 
 // ************************************************************
-// BIOZ Functions
+// MAX 30009 Functions
 // ************************************************************
 
-// Read specified register and return 32bit value
+// Read specified register and return 8-bit value
 //  Inputs: address of register to read (uint8)
-//  Outputs: uint32 of 3 data words (8-bits each)
+//  Outputs: uint8 of register value
 uint8_t readRegister(uint8_t addr)
 {
     // SPI Communication Starts
@@ -422,16 +459,18 @@ uint8_t readRegister(uint8_t addr)
     SPI.transfer(addr);
     SPI.transfer(READ_BYTE);
     // Temporary 8bit holder for read values
-    uint8_t read = SPI.transfer(0xFF); // DONT CARE Transmitted Bits
+    rxByte[0] = SPI.transfer(0xFF); // DONT CARE Transmitted Bits
     digitalWrite(CS, HIGH);
     SPI.endTransaction();
     // SPI Communication Ends
 
-    return read;
+    return rxByte[0];
 }
 
-
-void readStatusRegisters()
+// Read register function OVERLOAD for BURST reads
+//  If byteCount is greater than two bytes (two register read),
+//  then assume FIFO burst read.
+void readRegister(uint8_t addr, uint8_t byteCount)
 {
     // SPI Communication Starts
     SPI.beginTransaction(SPI_DEFINE);
@@ -439,11 +478,33 @@ void readStatusRegisters()
     // NOTE: Arduino Library Buffer Transfer doesn't work for this set-up
     // It transmits bytes in reverse order, meaning command word is sent last
     // if above bit shifts are applied
-    SPI.transfer(0x00);
+    SPI.transfer(addr);
     SPI.transfer(READ_BYTE);
-    // Temporary 8bit holder for read values
-    StatusReg1 = SPI.transfer(0xFF); // DONT CARE Transmitted Bits
-    StatusReg2 = SPI.transfer(0xFF); // DONT CARE Transmitted Bits
+    
+    // Check if burst 
+    if(byteCount == 2){
+      // 2-Register BURST Read
+      // for (int i = 0; i < byteCount; i++)
+      // {
+          // MAX 30009 returns 2 bytes, one for each reg
+          rxByte[0] = SPI.transfer(0);
+          rxByte[1] = SPI.transfer(1);
+      // }
+    }
+    else{
+      // Read BioZ BURST FIFO
+      //  Modifies: BiozFifoBurstValues global
+      for (int i = 0; i < byteCount; i++)
+      {
+          // MAX returns 24-bit word with 20 data bits and 4 tagging bits
+          // Capture each 8-bit chunk and store into global array
+          rxByte[0] = SPI.transfer(0xFF);
+          rxByte[1] = SPI.transfer(0xFF);
+          rxByte[2] = SPI.transfer(0xFF);
+          // Save into global FIFOBurstValues array to reuse rxByte array
+          BiozFifoBurstValues[i] = (rxByte[0] << 16) | (rxByte[1] << 8) | (rxByte[2]);
+      }
+    }
     digitalWrite(CS, HIGH);
     SPI.endTransaction();
     // SPI Communication Ends
@@ -467,33 +528,6 @@ void writeRegister(uint8_t addr, uint8_t writeValue)
     return;
 }
 
-// Read BioZ BURST FIFO
-//  Modifies: BiozFifoBurstValues global
-void readBiozFifoBurst()
-{
-    SPI.beginTransaction(SPI_DEFINE);
-    digitalWrite(CS, LOW);
-    SPI.transfer(REG_FIFO_DATA);
-    SPI.transfer(READ_BYTE);
-    for (int i = 0; i < 6; i++)
-    {
-        // MAX returns 24-bit word with 20 data bits and 4 tagging bits
-        // Capture each 8-bit chunk and store into global array
-
-        //Serial.println(i+1);
-        uint8_t read1 = SPI.transfer(1 + i * 3);
-        //Serial.println(read1, HEX);
-        uint8_t read2 = SPI.transfer(2 + i * 3);
-        //Serial.println(read2, HEX);
-        uint8_t read3 = SPI.transfer(3 + i * 3);
-        //Serial.println(read3, HEX);
-        BiozFifoBurstValues[i] = (read1 << 16) | (read2 << 8) | (read3);
-    }
-    digitalWrite(CS, HIGH);
-    SPI.endTransaction();
-    return;
-}
-
 // Configure the MAX30009 for BIOZ measurements
 void configureMAX_REGS()
 {
@@ -505,7 +539,7 @@ void configureMAX_REGS()
 		writeRegister(REG_SYS_CONFIG_1, 0x01);	// RESET
 
     // Read status register to clear any remaining flags
-    readStatusRegisters();
+    readRegister(REG_STATUS1,2);
 
     writeRegister(REG_FIFO_CONFIG_1, 0x7F);	// FIFO_A_FULL; assert A_FULL on NUM_SAMPLES_PER_INT samples   (AFE_FIFO_SIZE-NUM_SAMPLES_PER_INT)
 
@@ -538,7 +572,7 @@ void configureMAX_REGS()
     writeRegister(REG_INT_EN_2, INT_EN_2);
     //setSwitch_BIOZ();
     // Read status register to clear any remaining flags
-    readStatusRegisters();
+    readRegister(REG_STATUS1,2);
 }
 
 
@@ -575,31 +609,26 @@ void measurementSetup(void)
     //delayMicroseconds(5);
     writeRegister(REG_FIFO_CONFIG_2,0x1A); // Flush FIFO
     //delayMicroseconds(5);
-    readStatusRegisters();
+    readRegister(REG_STATUS1,2);
     //delayMicroseconds(5);
 
     // Setup Finished
 }
 
-void getMeasurement()
-{
-    //delay(200);
-    intPinState = analogRead(INT_PIN);
-    while (intPinState >= 0.8)
-    {
-      intPinState = analogRead(INT_PIN);
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    }
-    Serial.println("INT Pin Active");
-    intPinState = 1.7;
-
-      
-    // Begin Data Collection
-    startBurst = rtc.now(); 
-    onAfeInt();
-    endBurst = rtc.now(); 
-    delay(90);
-    // 
+// INT Pin Interrupt Function
+// void checkVoltage(void) {
+//   float voltage = analogRead(INT_PIN) * (3.3 / 1023.0); // Convert analog reading to voltage
+//   if (voltage <= 0.8) {
+//     Serial.print("Calculated Voltage:");
+//     Serial.println(voltage);
+//     interruptFlag = true; // Set the flag if voltage is above threshold
+//   }
+// }
+// Interrupt Service Routine (ISR)
+void handleInterrupt(void) {
+    interruptFlag = true; // Set the flag for loop()
 }
 
 void endCollection(void)
@@ -625,27 +654,23 @@ void endCollection(void)
     //delayMicroseconds(5);
 }
 
-void printData(void)
+void printData(volatile uint32_t &count)
 {
-  //char val[9]; // Buffer to hold the hexadecimal string
-  for (int j = 0; j < 6; j++)
+  if(count >= 255){
+    count = 255;
+  }
+  for (int j = 0; j < count; j++)
     {
       Serial.println((iterationCnt*6)+(j+1));
-      //Serial.println(BiozFifoBurstValues[j]);
-      //Serial.println(BiozFifoBurstValues[j], HEX);
       uint32_t tempValue = BiozFifoBurstValues[j];
       tempValue &= 0xFFFFFF;
-      //uint32ToHex(tempValue, val);
       Serial.print("0x");
       Serial.println(tempValue, HEX);
-      //tempValue &= 0xFFFFF;
-      //uint32ToHex(tempValue, val);
 
       // 2s Complement Conversion
-
-      double ZBIOZ = tempValue * 1/ (524288 * 10.0 * (2 / PI) * 0.0000320362);
-      Serial.print("0d");
-      Serial.println(ZBIOZ);
+      // double ZBIOZ = tempValue * 1/ (524288 * 10.0 * (2 / PI) * 0.0000320362);
+      // Serial.print("0d");
+      // Serial.println(ZBIOZ);
     }
   return;
 }
@@ -653,75 +678,42 @@ void printData(void)
 
 void printDataBluetooth(uint8_t* buf)
 {
-  //uint8_t buf[64];
-  int count;
+  // if(FIFOcount >= 255){
+  //   FIFOcount = 255;
+  // }
 
-  //if ( bleuart.available() ){
+    strncpy((char *)buf, startMessage.c_str(), startMessage.length());
+    // bleuart.write(0, buf, sizeof(buf));
+    printAll(buf, startMessage.length());
+    Serial.println("");
+    Serial.println("FIFOcount:");
+    Serial.println(FIFOcount);
+    sprintf((char *)buf, "%d", FIFOcount);
+    Serial.println("FIFOcount:");
+    Serial.println(FIFOcount);
+    bleuart.write(0, buf, 3);
 
-    //*buf = startBurstMessage.c_str();
-    // printAll((const uint8_t*)startBurstMessage.c_str(), startBurstMessage.length());
+    
+    //printAll((const uint8_t*)startBurstMessage.c_str(), startBurstMessage.length());
     // bleuart.write(0, (const char*)startBurst.hour(), startBurst.hour().length());
     // bleuart.write(0, (const char*)startBurst.minute(), startBurst.minute().length());
     // bleuart.write(0, (const char*)startBurst.second(), startBurst.second().length());
-      for (int j = 0; j < 6; j++)
+      for (int j = 0; j < FIFOcount; j++)
       {
         uint32_t tempValue = BiozFifoBurstValues[j];
         tempValue &= 0xFFFFFF;
-        Serial.print("Hex: 0x");
-        Serial.println(tempValue, HEX);
-
-        uint8_t buf[64];
-        char charArr[6]; // Enough space for 8 characters + null terminator
-
         // Convert the uint32_t value to a char array (hex string)
-        //snprintf(charArr, sizeof(charArr), "%08X", tempValue);
-        sprintf(charArr, "%06X", tempValue);
-        Serial.print("Ascii: 0x");
-        Serial.println(charArr);
-
-        strncpy((char *)buf, charArr, sizeof(buf));
-        buf[sizeof(buf) - 1] = '\0';
-
-        bleuart.write(0, buf, sizeof(buf)-1);
-
-        //*buf = '1FBED4';
-        // unsigned maskByte1 = ((1 << 8) - 1) << 16;
-        // unsigned maskByte2 = ((1 << 8) - 1) << 8;
-        // unsigned maskByte3 = (1 << 8) - 1;
-        // uint8_t tempValByte1 = tempValue & maskByte1;
-        // uint8_t tempValByte2 = tempValue & maskByte2;
-        // uint8_t tempValByte3 = tempValue & maskByte3;
-
-        // for(uint8_t charArrIndex = 0; charArrIndex < 6; charArrIndex++){
-        //   *buf = charArr[charArrIndex];
-        //   bleuart.write(0, buf, sizeof(buf)-1);
-        //   //Serial.println(charArr[charArrIndex]);
-        // }
-
-        // bleuart.write(0, (uint8_t*)charArr, 1);
-        //bleuart.write(0, buf, 6);
-        // *buf = '1';
-        // //printAll(buf,sizeof(buf)-1);
-        // bleuart.write(0, buf, sizeof(buf)-1);
-        // *buf = 'F';
-        // //printAll(buf,sizeof(buf)-1);
-        // bleuart.write(0, buf, sizeof(buf)-1);
-        // *buf = 'B';
-        // //printAll(buf,sizeof(buf)-1);
-        // bleuart.write(0, buf, sizeof(buf)-1);
-        // *buf = 'E';
-        // //printAll(buf,sizeof(buf)-1);
-        // bleuart.write(0, buf, sizeof(buf)-1);
-        // *buf = 'D';
-        // //printAll(buf,sizeof(buf)-1);
-        // bleuart.write(0, buf, sizeof(buf)-1);
-        // *buf = '4';
-        // //printAll(buf,sizeof(buf)-1);
-        // bleuart.write(0, buf, sizeof(buf)-1);
-        
+        sprintf((char *)buf, "%06X", tempValue);
+        Serial.print("0x");
+        Serial.println((char *)buf);
+        bleuart.write(0, buf, 6);      
 
       }
-    // printAll((const uint8_t*)endBurstMessage.c_str(), endBurstMessage.length());
+    // strncpy((char *)buf, setupComplete.c_str(), setupComplete.length());
+    // printAll(buf, sizeof(buf));
+    strncpy((char *)buf, endMessage.c_str(), endMessage.length());
+    printAll(buf, endMessage.length());
+    //printAll((const uint8_t*)endBurstMessage.c_str(), endBurstMessage.length());
     // bleuart.write(0, (const char*)endBurst.hour(), endBurst.hour().length());
     // bleuart.write(0, (const char*)endBurst.minute(), endBurst.minute().length());
     // bleuart.write(0, (const char*)endBurst.second(), endBurst.second().length());
@@ -736,34 +728,32 @@ void printDataBluetooth(uint8_t* buf)
 
 void onAfeInt(void)	// call this on AFE interrupt
 {
-  // read and clear all status registers
-	readStatusRegisters();
+  // READ and CLEAR all status registers
+	// readRegister(REG_STATUS1, 2);
+  readRegister(REG_STATUS1, 2);
   //delayMicroseconds(5);
-	if (!(StatusReg1 & 0x80)){	// check A_FULL bit
+	//if (!(rxByte[0] & 0b1000)){	// check A_FULL bit readRegister(REG_STATUS1
+  if (!(rxByte[0] & 0b1000)){	// check A_FULL bit 
     Serial.println("ERROR: A_FULL bit OFF");
     Serial.print("Expected:");
     Serial.println("0x8X or higher.");
     Serial.print("Received: 0x");
-    Serial.println(StatusReg1, HEX);
+    Serial.println(rxByte[0], HEX);
     dataError = 1;
 		return;
   }
-	//regCheck1 = readRegister(REG_FIFO_CTR_1);	
-  //unint8_t regCheck2 = readRegister(REG_FIFO_CTR_2);  // read FIFO_DATA_COUNT
-  uint8_t cntCheck = readRegister(REG_FIFO_CTR_2);
-  //delayMicroseconds(5);
-  if((!(cntCheck & 0x06))&(!(cntCheck & 0x08))){
-    Serial.println("ERROR: FIFO Count Check FAILED");
-    Serial.print("Expected:");
-    Serial.println("0x06");
-    Serial.print("Received: 0x");
-    Serial.println(cntCheck, HEX);
-    dataError = 1;
-    writeRegister(REG_FIFO_CTR_2,0x06); // Set FIFO Cnt
-    return;
-  }
-	//uint32_t count = ((regCheck1 & 0x80)<<1)|regCheck2;	// FIFO_DATA_COUNT should be equal to NUM_SAMPLES_PER_INT
-	readBiozFifoBurst();	// read FIFO_DATA
+  // delayMicroseconds(5);
+  // Check count value available for FIFO Burst Read
+  // readRegister(REG_FIFO_CTR_1,2);
+  // Serial.println(rxByte[0]);
+  // Serial.println(rxByte[1]);
+  // count = ((rxByte[0]&0b1000)<<1)|rxByte[1];	// FIFO_DATA_COUNT should be equal to NUM_SAMPLES_PER_INT
+  readRegister(REG_FIFO_CTR_1, 2);
+  FIFOcount = rxByte[1];
+  Serial.println(FIFOcount);
+  // delayMicroseconds(5);
+
+	// read FIFO_DATA
+	readRegister(REG_FIFO_DATA,FIFOcount);	
+  return;
 }
-
-

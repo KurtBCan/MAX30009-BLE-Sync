@@ -224,15 +224,18 @@ void bleuart_rx_callback(BLEClientUart& uart_svc)
   prph_info_t* peer = &prphs[id];
   
   // Print sender's name
-  Serial.printf("[From %s]: ", peer->name);
+  // Serial.printf("[From %s]: ", peer->name);
+  Serial.printf("[From %d]: ", id);
 
   // Read then forward to all peripherals
   while ( uart_svc.available() )
   {
     // default MTU with an extra byte for string terminator
-    char buf[20+1] = { 0 };
+    // char buf[64] = { 0 };
+    // char buf[255];
+    char buf[20] = { 0 };
 
-    if ( uart_svc.read(buf,sizeof(buf)-1) )
+    if ( uart_svc.read(buf,sizeof(buf)) )
     {
       Serial.println(buf);
       // sendAll(buf);
