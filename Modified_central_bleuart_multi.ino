@@ -81,6 +81,10 @@ SoftwareTimer blinkTimer;
 uint8_t connection_num = 0; // for blink pattern
 uint8_t STATE = 0;
 
+volatile uint16_t FIFOcount = 0;
+volatile uint32_t receivedData[256];
+
+
 void setup() 
 {
   Serial.begin(115200);
@@ -227,20 +231,64 @@ void bleuart_rx_callback(BLEClientUart& uart_svc)
   // Serial.printf("[From %s]: ", peer->name);
   Serial.printf("[From %d]: ", id);
 
-  // Read then forward to all peripherals
-  while ( uart_svc.available() )
-  {
-    // default MTU with an extra byte for string terminator
-    // char buf[64] = { 0 };
-    // char buf[255];
-    char buf[20] = { 0 };
+  // while (uart_svc.available() >= 18) {  // Expecting 18-byte packets
+  //       uint8_t buffer[18];
+  //       uart_svc.read(buffer, 18);
 
-    if ( uart_svc.read(buf,sizeof(buf)) )
-    {
-      Serial.println(buf);
-      // sendAll(buf);
+  //       uint32_t values[6]; // Extract 6 values per packet
+  //       for (int i = 0; i < 6; i++) {
+  //           values[i] = buffer[i * 3] | (buffer[i * 3 + 1] << 8) | (buffer[i * 3 + 2] << 16);
+  //       }
+
+  //       // Print the received values
+  //       Serial.print("Received packet: ");
+  //       for (int i = 0; i < 6; i++) {
+  //           Serial.print(values[i], HEX); // Print in hex to verify 24-bit format
+  //           if (i < 5) Serial.print(", ");
+  //       }
+  //       Serial.println();
+  //   }
+    
+       while (uart_svc.available()) {
+        uint8_t header;
+        uart_svc.read(&header, 1);  // Read the 1-byte header
+
+        if (header == 0x01) {  // Data count received
+            uint8_t countBuffer[4];
+            uart_svc.read(countBuffer, 4);
+            // memcpy(&FIFOcount, countBuffer, 4);
+            uint16_t temp_count;
+            memcpy(&temp_count, countBuffer, 2);  // Read 2 bytes for uint16_t
+            FIFOcount = temp_count; // Store back to volatile variable
+            Serial.print("Data count received: ");
+            Serial.println(FIFOcount);
+        
+        } else if (header == 0x02) {  // Sensor data
+            uint8_t buffer[18];
+            int chunk_size = min(6, FIFOcount);  // Ensure correct chunk size
+
+            uart_svc.read(buffer, chunk_size * 3);
+            for (int i = 0; i < chunk_size; i++) {
+                receivedData[i] = buffer[i * 3] | (buffer[i * 3 + 1] << 8) | (buffer[i * 3 + 2] << 16);
+            }
+
+            Serial.print("Data: ");
+            for (int i = 0; i < chunk_size; i++) {
+                Serial.print(receivedData[i], HEX);
+                Serial.print(" ");
+            }
+            Serial.println();
+
+        } else if (header == 0x03) {  // Text message
+            char textBuffer[21] = {0};  // Extra space for null-terminator
+            int msg_length = uart_svc.available();
+            uart_svc.read((uint8_t*)textBuffer, msg_length);
+            textBuffer[msg_length] = '\0';  // Ensure null termination
+
+            Serial.print("Text received: ");
+            Serial.println(textBuffer);
+        }
     }
-  }
 }
 
 /**

@@ -102,17 +102,19 @@ int dataError = 0;
 // GLOBAL VARIABLES
 // ************************************************************
 volatile int measCount = 0;                 // Tracks number of completed measurements during BIOZ interrupt reads
-volatile int32_t BiozFifoBurstValues[6];    // Array to store valid BIOZ reads during measurement
+volatile int32_t BiozFifoBurstValues[255] = {0};    // Array to store valid BIOZ reads during measurement
 volatile int32_t savedBiozResistance[9][6]; // Array for storing BIOZ read data after measurement
                                             // First index tracks the frequency
                                             // Second index tracks the repeated measurement number
 volatile int32_t savedBiozReactance[9][6];
 
-uint8_t FIFOcount;
+volatile uint16_t FIFOcount;
 
 volatile uint8_t rxByte[3];	// array to store register reads
 
 volatile bool interruptFlag = false; // Flag to indicate interrupt
+
+const uint8_t headerMarker[2] = { 0xAA, 0x55 }; // Unique header
 
 void setup() {
   Serial.begin(115200);
@@ -189,6 +191,10 @@ void setup() {
 
   // Serial.println("Is Working Here 1?");
 
+  // int32_t mtu = Bluefruit.requestMTU(247);
+  // Serial.print("MTU Set to: ");
+  // Serial.println(mtu);
+
 }
 
   ////////////////////////////////////
@@ -227,12 +233,13 @@ void startAdv(void)
 // print a string to Serial Uart and all connected BLE Uart
 void printAll(uint8_t* buf, int count)
 {
-  Serial.write(buf, count);
+  // Serial.write(buf, count);
 
   // Send to all connected centrals
   for (uint8_t conn_hdl=0; conn_hdl < MAX_PRPH_CONNECTION; conn_hdl++)
   {
     bleuart.write(conn_hdl, buf, count);
+    // bleuart.write(buf, count, false);
   }
 }
 
@@ -244,7 +251,8 @@ void printAll(uint8_t* buf, int count)
 void loop() {
 
   // uint8_t buf[255];
-  uint8_t buf[64];
+  // uint8_t buf[64];
+  uint8_t buf[1536];
   int count;
 
   // int intState = digitalRead(INT_PIN);
@@ -308,8 +316,9 @@ void loop() {
     //int intState = digitalRead(INT_PIN);
     configureMAX_REGS(); // Configure REGS
     Serial.println("Regs Configured");
-    strncpy((char *)buf, setupComplete.c_str(), setupComplete.length());
-    printAll(buf, setupComplete.length());
+    // strncpy((char *)buf, setupComplete.c_str(), setupComplete.length());
+    // printAll(buf, setupComplete.length());
+    sendTextMessage("Setup Complete!");
 
     digitalWrite(ledPin, HIGH);  // LED OFF
     //digitalWrite(OUTPUT_PIN, LOW);  // LED OFF
@@ -342,16 +351,20 @@ void loop() {
     dataError = 0;
     //while (dataError != 1)
     //while (iterationCnt != 1)
-    while (dataError != 1)
+    while (1)
     {
       if (interruptFlag) {
         interruptFlag = false; // Reset the flag
-        Serial.println("INT Pin Active");
         // Begin Data Collection
         onAfeInt();
-        if(priority = 1){
-          printDataBluetooth(buf);
-        }
+        // if(priority = 1){
+        //  printDataBluetooth(buf);
+        // sendDataBLE();
+        sendTextMessage("Transmission Start!");
+        sendDataCount();
+        sendData();
+        sendTextMessage("Transmission Complete!");
+        // }
         //printData(count);
         iterationCnt += 1;
       }
@@ -494,7 +507,7 @@ void readRegister(uint8_t addr, uint8_t byteCount)
     else{
       // Read BioZ BURST FIFO
       //  Modifies: BiozFifoBurstValues global
-      for (int i = 0; i < byteCount; i++)
+      for (int i = 0; i < FIFOcount; i++)
       {
           // MAX returns 24-bit word with 20 data bits and 4 tagging bits
           // Capture each 8-bit chunk and store into global array
@@ -502,7 +515,9 @@ void readRegister(uint8_t addr, uint8_t byteCount)
           rxByte[1] = SPI.transfer(0xFF);
           rxByte[2] = SPI.transfer(0xFF);
           // Save into global FIFOBurstValues array to reuse rxByte array
-          BiozFifoBurstValues[i] = (rxByte[0] << 16) | (rxByte[1] << 8) | (rxByte[2]);
+          BiozFifoBurstValues[i] = (rxByte[0] << 16) | (rxByte[1] << 8) | (rxByte[2]) & 0xFFFFFF;;
+
+          // rxByte = { 0 };
       }
     }
     digitalWrite(CS, HIGH);
@@ -589,7 +604,8 @@ void measurementSetup(void)
     //delayMicroseconds(5);
     readRegister(REG_BIOZ_CONFIG_1);
     //delayMicroseconds(5);
-    writeRegister(REG_FIFO_CONFIG_1,0xFA);
+    writeRegister(REG_FIFO_CONFIG_1,0xFA); // 6 Points triggers INT
+    // writeRegister(REG_FIFO_CONFIG_1,0x80); // 128 Points triggers INT
     //delayMicroseconds(5);
     readRegister(REG_BIOZ_CONFIG_1);
     //delayMicroseconds(5);
@@ -654,61 +670,54 @@ void endCollection(void)
     //delayMicroseconds(5);
 }
 
-void printData(volatile uint32_t &count)
-{
-  if(count >= 255){
-    count = 255;
-  }
-  for (int j = 0; j < count; j++)
-    {
-      Serial.println((iterationCnt*6)+(j+1));
-      uint32_t tempValue = BiozFifoBurstValues[j];
-      tempValue &= 0xFFFFFF;
-      Serial.print("0x");
-      Serial.println(tempValue, HEX);
-
-      // 2s Complement Conversion
-      // double ZBIOZ = tempValue * 1/ (524288 * 10.0 * (2 / PI) * 0.0000320362);
-      // Serial.print("0d");
-      // Serial.println(ZBIOZ);
+void printBuffer(uint8_t *buffer, size_t length) {
+    Serial.print("Buffer: ");
+    for (size_t i = 0; i < length; i++) {
+        Serial.printf("%02X ", buffer[i]);  // Print in hex format
     }
-  return;
+    Serial.println();
 }
 
 
 void printDataBluetooth(uint8_t* buf)
 {
-  // if(FIFOcount >= 255){
+  if(FIFOcount >= 255){
+    FIFOcount = 255;
+  }
+  // else if(FIFOcount == 0){ // Dummy fix to keep it contiously running
   //   FIFOcount = 255;
   // }
 
-    strncpy((char *)buf, startMessage.c_str(), startMessage.length());
-    // bleuart.write(0, buf, sizeof(buf));
-    printAll(buf, startMessage.length());
-    Serial.println("");
-    Serial.println("FIFOcount:");
-    Serial.println(FIFOcount);
-    sprintf((char *)buf, "%d", FIFOcount);
-    Serial.println("FIFOcount:");
-    Serial.println(FIFOcount);
-    bleuart.write(0, buf, 3);
+  strncpy((char *)buf, startMessage.c_str(), startMessage.length());
+  // bleuart.write(0, buf, sizeof(buf));
+  printAll(buf, startMessage.length());
+  sprintf((char *)buf, "%d", FIFOcount);
+  bleuart.write(0, buf, 3);
+
+  memcpy(buf, (const void*)BiozFifoBurstValues, 6 * FIFOcount);  // Copy data
+
+  // Debug: Print buffer to Serial
+  // printBuffer(buf, 6 * FIFOcount);
+
+  // Send data over BLE
+  bleuart.write(0, buf, 240);
 
     
     //printAll((const uint8_t*)startBurstMessage.c_str(), startBurstMessage.length());
     // bleuart.write(0, (const char*)startBurst.hour(), startBurst.hour().length());
     // bleuart.write(0, (const char*)startBurst.minute(), startBurst.minute().length());
     // bleuart.write(0, (const char*)startBurst.second(), startBurst.second().length());
-      for (int j = 0; j < FIFOcount; j++)
-      {
-        uint32_t tempValue = BiozFifoBurstValues[j];
-        tempValue &= 0xFFFFFF;
-        // Convert the uint32_t value to a char array (hex string)
-        sprintf((char *)buf, "%06X", tempValue);
-        Serial.print("0x");
-        Serial.println((char *)buf);
-        bleuart.write(0, buf, 6);      
+      // for (int j = 0; j < FIFOcount; j++)
+      // {
+      //   uint32_t tempValue = BiozFifoBurstValues[j];
+      //   tempValue &= 0xFFFFFF;
+      //   // Convert the uint32_t value to a char array (hex string)
+      //   sprintf((char *)buf, "%06X", tempValue);
+      //   // Serial.print("0x");
+      //   // Serial.println((char *)buf);
+      //   bleuart.write(0, buf, 6);      
 
-      }
+      // }
     // strncpy((char *)buf, setupComplete.c_str(), setupComplete.length());
     // printAll(buf, sizeof(buf));
     strncpy((char *)buf, endMessage.c_str(), endMessage.length());
@@ -721,6 +730,72 @@ void printDataBluetooth(uint8_t* buf)
   //}
   return;
 }
+
+// Send data_count with header 0x01
+void sendDataCount() {
+    uint8_t buffer[5];  // 1-byte header + 4-byte count
+    buffer[0] = 0x01;
+    // memcpy(&buffer[1], &FIFOcount, 4);  // Copy data_count as uint32_t
+    uint16_t temp_count = FIFOcount; // Copy volatile value to non-volatile
+    memcpy(&buffer[1], &temp_count, 2);  // Use 2 bytes for uint16_t
+    bleuart.write(buffer, 5);
+    // delay(10);  // Ensure reliable transmission
+}
+
+
+// void sendDataBLE() {
+//     uint8_t buffer[18]; // 6 values × 3 bytes (24-bit) per packet
+//     Serial.println(FIFOcount);
+//     for (int i = 0; i < FIFOcount; i += 6) {
+//         for (int j = 0; j < 6; j++) {
+//             uint32_t value = BiozFifoBurstValues[i + j] & 0xFFFFFF; // Ensure 24-bit data
+//             buffer[j * 3] = value & 0xFF;
+//             buffer[j * 3 + 1] = (value >> 8) & 0xFF;
+//             buffer[j * 3 + 2] = (value >> 16) & 0xFF;
+//         }
+
+//         while (!bleuart.write(buffer, 18)) {
+//             delay(1); // Wait for buffer space
+//         }
+//     }
+// }
+
+
+// Send sensor data with header 0x02
+void sendData() {
+    uint8_t buffer[19];  // 1-byte header + 6 × 24-bit values
+    buffer[0] = 0x02;
+
+    for (int i = 0; i < FIFOcount; i += 6) {
+        int chunk_size = min(6, FIFOcount - i);  // Handle remaining data
+
+        for (int j = 0; j < chunk_size; j++) {
+            uint32_t value = BiozFifoBurstValues[i + j] & 0xFFFFFF;
+            buffer[1 + j * 3] = value & 0xFF;
+            buffer[2 + j * 3] = (value >> 8) & 0xFF;
+            buffer[3 + j * 3] = (value >> 16) & 0xFF;
+        }
+
+        bleuart.write(buffer, 1 + chunk_size * 3);
+        // delay(10);
+    }
+}
+
+// Send text messages with header 0x03
+void sendTextMessage(const char* msg) {
+    uint8_t buffer[21];  // 1-byte header + 20 bytes of text max
+    buffer[0] = 0x03;
+
+    int msg_len = strlen(msg);
+    for (int i = 0; i < msg_len; i += 20) {
+        int chunk_size = min(20, msg_len - i);
+        memcpy(&buffer[1], msg + i, chunk_size);
+
+        bleuart.write(buffer, 1 + chunk_size);
+        delay(10);
+    }
+}
+
 
 // ***************************************************
 // On AFE Interrupt Pin Signal Goes LOW (from Example Source Code)
@@ -751,9 +826,12 @@ void onAfeInt(void)	// call this on AFE interrupt
   readRegister(REG_FIFO_CTR_1, 2);
   FIFOcount = rxByte[1];
   Serial.println(FIFOcount);
-  // delayMicroseconds(5);
-
 	// read FIFO_DATA
-	readRegister(REG_FIFO_DATA,FIFOcount);	
+  // if(FIFOcount == 0){
+  //   readRegister(REG_FIFO_DATA,255); // Dummy fix
+  // }
+  // else{
+	  readRegister(REG_FIFO_DATA,FIFOcount);
+  // }
   return;
 }
