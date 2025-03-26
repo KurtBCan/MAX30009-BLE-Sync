@@ -103,6 +103,13 @@ void setup()
 
   // Set Name
   Bluefruit.setName("Xiao Central");
+
+///////////////////////////////////////////////////////////////////////////////////
+  // Speed up connection (CRITICAL for fast FIFO data transmissions)
+  Bluefruit.configCentralBandwidth(BANDWIDTH_MAX);  // Maximize MTU
+  Bluefruit.Central.setConnInterval(12, 24);  // Faster connection interval
+  Bluefruit.setTxPower(8);  // Boost TX power
+  ///////////////////////////////////////////////////////////////////////////////////
   
   // Init peripheral pool
   for (uint8_t idx=0; idx<BLE_MAX_CONNECTION; idx++)
@@ -287,9 +294,17 @@ void bleuart_rx_callback(BLEClientUart& uart_svc)
 
             Serial.print("Text received: ");
             Serial.println(textBuffer);
+            if (textBuffer == "MAX 1 Complete!"){
+              sendAll("2");
+            }
+            else if(textBuffer == "MAX 2 Complete!"){
+              sendAll("1");
+            }
         }
     }
 }
+
+
 
 /**
  * Helper function to send a string to all connected peripherals

@@ -8,6 +8,7 @@
 #include <bluefruit.h>
 #include <Wire.h>
 //#include <Adafruit_TinyUSB.h>
+#include <ctype.h>  // Needed for `isspace()`
 
 // Custom libraries
 //#include "ALRI_DUE_PINS.h"          // DUE pins for ALRI PCB
@@ -37,6 +38,10 @@ volatile unsigned long lastSyncTime = 0;  // Stores last received sync signal ti
 const int ledPin = LED_BUILTIN; // pin to use for the LED
 DateTime startBurst;
 DateTime endBurst;
+
+#define BUFFER_SIZE 64  // Max expected command length
+char receivedCommand[BUFFER_SIZE] = "";  // Stores incoming command
+bool commandReceived = false;  // Flag to indicate a new command received
 
 RTC_DS3231 rtc;
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
@@ -73,6 +78,14 @@ int priority = 1;
 
 #define NUM_BYTES_PER_SAMPLE	3
 #define NUM_SAMPLES_PER_INT		129	/* number of samples in FIFO that generates a FIFO_A_FULL interrupt */
+
+uint8_t STATE = 0;
+#define STATE_WAIT  0
+#define STATE_START 1
+#define STATE_SYNC  2
+#define STATE_STOP  3
+
+uint8_t TURN = 1;
 
 // Global Variable
 //uint8_t gReadBuf[NUM_SAMPLES_PER_INT*NUM_BYTES_PER_SAMPLE];	// array to store register reads
@@ -136,6 +149,13 @@ void setup() {
   Bluefruit.Periph.setConnectCallback(connect_callback);
   Bluefruit.Periph.setDisconnectCallback(disconnect_callback);
 
+///////////////////////////////////////////////////////////////////////////////////
+  // Speed up connections
+  Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);  // Maximize MTU
+  Bluefruit.Periph.setConnInterval(12, 24u);
+  Bluefruit.setTxPower(8);
+  ///////////////////////////////////////////////////////////////////////////////////
+
   // To be consistent OTA DFU should be added first if it exists
   bledfu.begin();
 
@@ -147,6 +167,8 @@ void setup() {
 
   // Configure and Start BLE Uart Service
   bleuart.begin();
+
+  bleuart.setRxCallback(rx_callback);
 
   // Set up and start advertising
   startAdv();
@@ -250,17 +272,7 @@ void printAll(uint8_t* buf, int count)
 
 void loop() {
 
-  // uint8_t buf[255];
-  // uint8_t buf[64];
-  uint8_t buf[1536];
-  int count;
 
-  // int intState = digitalRead(INT_PIN);
-  //   //Serial.println("Working Here 1");
-  // //delay(1000);
-  // configureMAX_REGS(); // Configure REGS
-  // Serial.println("Regs Configured");
-  //delay(100);
   // for(int loopVal= 1; loopVal<11; loopVal++){
   //   if( bleuart.available() ){
   //     // DateTime now = rtc.now(); 
@@ -282,22 +294,9 @@ void loop() {
       // Serial.print(':');
       // Serial.println(now.second(), DEC);
 
-      // char hexVal[3]; // Buffer to hold the hexadecimal string
-        /////////////////////////////////////////////////////////////////////////////////////////////////
-      // Serial.println("What Registers to check?");
-      // delay(500);
-      // Serial.println("Checking FIFO_A_FULL Reg Val");
-      // uint8ToHex(REG_FIFO_CONFIG_1, hexVal);
-      // Serial.print("0x");
-      // Serial.println(hexVal);
-      // uint8ToHex(readRegister(REG_FIFO_CONFIG_1), hexVal);
-      // Serial.print("0x");
-      // Serial.println(hexVal);
-
-  //Serial.println("Working Here *2*");
-  // while (1) {
-  while (bleuart.available()) {
-
+  // while (bleuart.available()) {
+  // processCommand();
+  if (STATE == STATE_START){ 
     delay(2000);
 
     endCollection();
@@ -306,14 +305,6 @@ void loop() {
 
     Serial.println("BLEUART Available.");
 
-    count = bleuart.read(buf, sizeof(buf));
-
-    // if(strncmp((char*)buf, "START", 5) == 0){
-    //   // Delay to wait for enough input
-    //   delay(2);
-    // }
-
-    //int intState = digitalRead(INT_PIN);
     configureMAX_REGS(); // Configure REGS
     Serial.println("Regs Configured");
     // strncpy((char *)buf, setupComplete.c_str(), setupComplete.length());
@@ -325,23 +316,7 @@ void loop() {
 
     digitalWrite(ledPin, LOW);  // LED ON
       
-    // Serial.println("Enter START to sweep BIOZ");
 
-    // while (Serial.available() == 0) // Wait for UART to settle
-    //     ;
-
-    //Serial.println("Is Working?");
-    // delay(50);
-    // String userInput = Serial.readString();
-    // userInput.trim();  
-    // Serial.println("I received: ");
-    // Serial.println(userInput);
-
-    // String userInput = Serial.readString();
-    // userInput.trim();
-    // while (userInput != "START");
-    //     userInput = Serial.readString(); // Idle until START received
-    // digitalWrite(LED_BUILTIN, HIGH);  
     Serial.println("Sweeping BIOZ");
 
     char hexVal[3]; // Buffer to hold the hexadecimal string
@@ -353,6 +328,9 @@ void loop() {
     //while (iterationCnt != 1)
     while (1)
     {
+      if(STATE == STATE_STOP){
+        break;
+      }
       if (interruptFlag) {
         interruptFlag = false; // Reset the flag
         // Begin Data Collection
@@ -360,33 +338,27 @@ void loop() {
         // if(priority = 1){
         //  printDataBluetooth(buf);
         // sendDataBLE();
-        sendTextMessage("Transmission Start!");
+        // while ( TURN != 1 ) {
+        //   delayMicroseconds(5);
+        // }
+        sendTextMessage("MAX 1 Start!");
         sendDataCount();
         sendData();
-        sendTextMessage("Transmission Complete!");
+        sendTextMessage("MAX 1 Complete!");
         // }
         //printData(count);
         iterationCnt += 1;
       }
-      // getMeasurement();
-      // printData();
 
-
-      // Serial.println("Press ENTER to continue, STOP to end.");
-      // while (Serial.available() == 0) // Wait for UART to settle
-      // ;
-      // userInput = Serial.readString();
-      // userInput.trim();
-      // delay(50);
-      iterationCnt += 1;
-      //dataError = 1;
     }
-
   }
-
-  endCollection();
-  delay(1000);
-  digitalWrite(LED_BUILTIN, LOW);  
+// }
+  if(STATE == STATE_STOP){
+    endCollection();
+    delay(1000);
+    digitalWrite(LED_BUILTIN, LOW);  
+    STATE = STATE_WAIT;
+  }
 
 }
 
@@ -436,6 +408,59 @@ void disconnect_callback(uint16_t conn_handle, uint8_t reason)
   connection_count--;
 }
 
+
+// RX Callback Function
+// void rx_callback(uint16_t conn_handle) {
+//     static uint8_t index = 0;
+
+//     while (bleuart.available()) {
+//         char c = bleuart.read();
+
+//         if (index < BUFFER_SIZE - 1) {
+//             receivedCommand[index++] = c;
+//         }
+
+//         if (c == '\n' || c == '\r') {
+//             receivedCommand[index] = '\0';  // Null-terminate string
+//             trimCommand(receivedCommand);   // Trim unwanted characters
+//             index = 0;
+//             commandReceived = true;
+//         }
+//     }
+// }
+
+void rx_callback(uint16_t conn_handle) {
+    char buffer[32];
+    int len = bleuart.read(buffer, sizeof(buffer) - 1);
+    if (len > 0) {
+        buffer[len] = '\0';  // Null-terminate
+        String receivedStr = String(buffer);
+        receivedStr.trim();  // Remove unwanted characters
+        if (receivedStr == "START") {
+            Serial.println("START command received!");
+            STATE = STATE_START;
+        }
+        else if (receivedStr == "STOP") {
+            Serial.println("STOP command received! Pausing data transmission.");
+            STATE = STATE_STOP;
+        }
+        else if (receivedStr == "SYNC") {
+            Serial.println("Processing SYNC command...");
+            STATE = STATE_SYNC;
+        }
+        else if (receivedStr == "2") {
+            Serial.println("Turn 2");
+            TURN = 2;
+        }
+        else if (receivedStr == "1") {
+            Serial.println("Turn 1");
+            TURN = 1;
+        }
+        else {
+            Serial.println("Unknown command.");
+        }
+    }
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -741,25 +766,6 @@ void sendDataCount() {
     bleuart.write(buffer, 5);
     // delay(10);  // Ensure reliable transmission
 }
-
-
-// void sendDataBLE() {
-//     uint8_t buffer[18]; // 6 values × 3 bytes (24-bit) per packet
-//     Serial.println(FIFOcount);
-//     for (int i = 0; i < FIFOcount; i += 6) {
-//         for (int j = 0; j < 6; j++) {
-//             uint32_t value = BiozFifoBurstValues[i + j] & 0xFFFFFF; // Ensure 24-bit data
-//             buffer[j * 3] = value & 0xFF;
-//             buffer[j * 3 + 1] = (value >> 8) & 0xFF;
-//             buffer[j * 3 + 2] = (value >> 16) & 0xFF;
-//         }
-
-//         while (!bleuart.write(buffer, 18)) {
-//             delay(1); // Wait for buffer space
-//         }
-//     }
-// }
-
 
 // Send sensor data with header 0x02
 void sendData() {
