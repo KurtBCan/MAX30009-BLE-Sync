@@ -85,7 +85,7 @@ uint8_t STATE = 0;
 #define STATE_SYNC  2
 #define STATE_STOP  3
 
-uint8_t TURN = 1;
+volatile uint8_t TURN = 1;
 
 // Global Variable
 //uint8_t gReadBuf[NUM_SAMPLES_PER_INT*NUM_BYTES_PER_SAMPLE];	// array to store register reads
@@ -152,7 +152,7 @@ void setup() {
 ///////////////////////////////////////////////////////////////////////////////////
   // Speed up connections
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);  // Maximize MTU
-  Bluefruit.Periph.setConnInterval(12, 24u);
+  Bluefruit.Periph.setConnInterval(24, 48);
   Bluefruit.setTxPower(8);
   ///////////////////////////////////////////////////////////////////////////////////
 
@@ -162,7 +162,7 @@ void setup() {
   // Configure and Start Device Information Service
   bledis.setManufacturer("Seeed Studio");
   bledis.setModel("Xiao nRF52840");
-  //bledis.setName("Xiao nRF52");
+  // bledis.setName("Xiao 1");
   bledis.begin();
 
   // Configure and Start BLE Uart Service
@@ -210,8 +210,6 @@ void setup() {
 
   pinMode(INT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(INT_PIN), handleInterrupt, FALLING); // Trigger on falling edge
-
-  // Serial.println("Is Working Here 1?");
 
   // int32_t mtu = Bluefruit.requestMTU(247);
   // Serial.print("MTU Set to: ");
@@ -271,8 +269,6 @@ void printAll(uint8_t* buf, int count)
 // ************************************************************
 
 void loop() {
-
-
   // for(int loopVal= 1; loopVal<11; loopVal++){
   //   if( bleuart.available() ){
   //     // DateTime now = rtc.now(); 
@@ -339,12 +335,14 @@ void loop() {
         //  printDataBluetooth(buf);
         // sendDataBLE();
         // while ( TURN != 1 ) {
-        //   delayMicroseconds(5);
+        //   // delayMicroseconds(5);
         // }
         sendTextMessage("MAX 1 Start!");
         sendDataCount();
         sendData();
         sendTextMessage("MAX 1 Complete!");
+        // delayMicroseconds(10);
+        TURN = 2;
         // }
         //printData(count);
         iterationCnt += 1;
@@ -448,14 +446,14 @@ void rx_callback(uint16_t conn_handle) {
             Serial.println("Processing SYNC command...");
             STATE = STATE_SYNC;
         }
-        else if (receivedStr == "2") {
-            Serial.println("Turn 2");
-            TURN = 2;
-        }
-        else if (receivedStr == "1") {
-            Serial.println("Turn 1");
-            TURN = 1;
-        }
+        // else if (receivedStr == "2") {
+        //     Serial.println("Turn 2");
+        //     TURN = 2;
+        // }
+        // else if (receivedStr == "1") {
+        //     Serial.println("Turn 1");
+        //     TURN = 1;
+        // }
         else {
             Serial.println("Unknown command.");
         }

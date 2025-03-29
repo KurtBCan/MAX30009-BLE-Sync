@@ -107,7 +107,7 @@ void setup()
 ///////////////////////////////////////////////////////////////////////////////////
   // Speed up connection (CRITICAL for fast FIFO data transmissions)
   Bluefruit.configCentralBandwidth(BANDWIDTH_MAX);  // Maximize MTU
-  Bluefruit.Central.setConnInterval(12, 24);  // Faster connection interval
+  Bluefruit.Central.setConnInterval(24, 48);  // Faster connection interval
   Bluefruit.setTxPower(8);  // Boost TX power
   ///////////////////////////////////////////////////////////////////////////////////
   
@@ -237,24 +237,6 @@ void bleuart_rx_callback(BLEClientUart& uart_svc)
   // Print sender's name
   // Serial.printf("[From %s]: ", peer->name);
   Serial.printf("[From %d]: ", id);
-
-  // while (uart_svc.available() >= 18) {  // Expecting 18-byte packets
-  //       uint8_t buffer[18];
-  //       uart_svc.read(buffer, 18);
-
-  //       uint32_t values[6]; // Extract 6 values per packet
-  //       for (int i = 0; i < 6; i++) {
-  //           values[i] = buffer[i * 3] | (buffer[i * 3 + 1] << 8) | (buffer[i * 3 + 2] << 16);
-  //       }
-
-  //       // Print the received values
-  //       Serial.print("Received packet: ");
-  //       for (int i = 0; i < 6; i++) {
-  //           Serial.print(values[i], HEX); // Print in hex to verify 24-bit format
-  //           if (i < 5) Serial.print(", ");
-  //       }
-  //       Serial.println();
-  //   }
     
        while (uart_svc.available()) {
         uint8_t header;
@@ -291,15 +273,16 @@ void bleuart_rx_callback(BLEClientUart& uart_svc)
             int msg_length = uart_svc.available();
             uart_svc.read((uint8_t*)textBuffer, msg_length);
             textBuffer[msg_length] = '\0';  // Ensure null termination
-
+            String receivedStr = String(textBuffer);
+            receivedStr.trim();  // Remove unwanted characters
             Serial.print("Text received: ");
-            Serial.println(textBuffer);
-            if (textBuffer == "MAX 1 Complete!"){
-              sendAll("2");
-            }
-            else if(textBuffer == "MAX 2 Complete!"){
-              sendAll("1");
-            }
+            Serial.println(receivedStr);
+            // if (receivedStr == "MAX 1 Complete!"){
+            //   sendAll("2");
+            // }
+            // else if(receivedStr == "MAX 2 Complete!"){
+            //   sendAll("1");
+            // }
         }
     }
 }
