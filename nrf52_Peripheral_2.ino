@@ -331,6 +331,10 @@ void loop() {
       if(STATE == STATE_STOP){
         break;
       }
+      else if(STATE == STATE_SYNC){
+        sync();
+        STATE = STATE_START;
+      }
       if (interruptFlag) {
         interruptFlag = false; // Reset the flag
         // Begin Data Collection
@@ -446,7 +450,7 @@ void rx_callback(uint16_t conn_handle) {
             STATE = STATE_STOP;
         }
         else if (receivedStr == "SYNC") {
-            Serial.println("Processing SYNC command...");
+            // Serial.println("Processing SYNC command...");
             STATE = STATE_SYNC;
         }
         // else if (receivedStr == "2") {
@@ -459,6 +463,7 @@ void rx_callback(uint16_t conn_handle) {
         // }
         else {
             Serial.println("Unknown command.");
+            // Serial.println(receivedStr);
         }
     }
 }
@@ -483,6 +488,11 @@ void uint32ToHex(uint32_t number, char* hexString) {
 // ************************************************************
 // MAX 30009 Functions
 // ************************************************************
+
+void sync(void){
+  writeRegister(REG_SYS_SYNC, 0x80);
+  return;
+}
 
 // Read specified register and return 8-bit value
 //  Inputs: address of register to read (uint8)

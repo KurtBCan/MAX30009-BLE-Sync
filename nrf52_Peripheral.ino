@@ -198,18 +198,20 @@ void setup() {
 
 
 // RTC Setup
-  if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    Serial.flush();
-    while (1) delay(10);
-  }
+  // if (! rtc.begin()) {
+  //   Serial.println("Couldn't find RTC");
+  //   Serial.flush();
+  //   while (1) delay(10);
+  // }
 
-  if (rtc.lostPower()) {
-    Serial.println("RTC lost power, RTC needs a time reset");
-  }
+  // if (rtc.lostPower()) {
+  //   Serial.println("RTC lost power, RTC needs a time reset");
+  // }
 
   pinMode(INT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(INT_PIN), handleInterrupt, FALLING); // Trigger on falling edge
+
+  pinMode(TRIG_PIN, OUTPUT);
 
   // int32_t mtu = Bluefruit.requestMTU(247);
   // Serial.print("MTU Set to: ");
@@ -327,6 +329,10 @@ void loop() {
       if(STATE == STATE_STOP){
         break;
       }
+      else if(STATE == STATE_SYNC){
+        sync();
+        STATE = STATE_START;
+      }
       if (interruptFlag) {
         interruptFlag = false; // Reset the flag
         // Begin Data Collection
@@ -443,7 +449,7 @@ void rx_callback(uint16_t conn_handle) {
             STATE = STATE_STOP;
         }
         else if (receivedStr == "SYNC") {
-            Serial.println("Processing SYNC command...");
+            // Serial.println("Processing SYNC command...");
             STATE = STATE_SYNC;
         }
         // else if (receivedStr == "2") {
@@ -456,6 +462,7 @@ void rx_callback(uint16_t conn_handle) {
         // }
         else {
             Serial.println("Unknown command.");
+            // Serial.println(receivedStr);
         }
     }
 }
@@ -480,6 +487,52 @@ void uint32ToHex(uint32_t number, char* hexString) {
 // ************************************************************
 // MAX 30009 Functions
 // ************************************************************
+
+void syncAllSteps(void){
+    // Disable BIOZ_BG_EN, BIOZ_Q_EN, and BIOZ_I_EN
+    writeRegister(REG_BIOZ_CONFIG_1, 0xF0); 
+    // Reset MAX and flush FIFO by setting SHDN, then clear SHDN
+    writeRegister(REG_SYS_CONFIG_1, 0x02);
+    writeRegister(REG_SYS_CONFIG_1, 0x00);
+    delay(6); // Delay 6 ms
+    // Program Config Registers
+    writeRegister(REG_PIN_FUNC_CONFIG, PIN_FUNC_CONFIG);
+    // writeRegister(REG_PLL_CONFIG_1, PLL_CONFIG_1);
+    writeRegister(REG_PLL_CONFIG_2, PLL_CONFIG_2);
+    writeRegister(REG_PLL_CONFIG_3, PLL_CONFIG_3);
+    writeRegister(REG_PLL_CONFIG_4, PLL_CONFIG_4);
+    // writeRegister(REG_BIOZ_CONFIG_1, BIOZ_CONFIG_1);
+    writeRegister(REG_BIOZ_CONFIG_2, BIOZ_CONFIG_2);
+    writeRegister(REG_BIOZ_CONFIG_3, BIOZ_CONFIG_3);
+    writeRegister(REG_BIOZ_CONFIG_4, BIOZ_CONFIG_4);
+    writeRegister(REG_BIOZ_CONFIG_5, BIOZ_CONFIG_5);
+    writeRegister(REG_BIOZ_CONFIG_6, BIOZ_CONFIG_6);
+    writeRegister(REG_BIOZ_LW_THRSHLD, BIOZ_LW_THRSHLD);
+    writeRegister(REG_BIOZ_HI_THRSHLD, BIOZ_HI_THRSHLD);
+    writeRegister(REG_BIOZ_CONFIG_7, BIOZ_CONFIG_7);
+    writeRegister(REG_BIOZ_MUX_CONFIG_1, BIOZ_MUX_CONFIG_1);
+    writeRegister(REG_BIOZ_MUX_CONFIG_2, BIOZ_MUX_CONFIG_2);
+    writeRegister(REG_BIOZ_MUX_CONFIG_3, BIOZ_MUX_CONFIG_3);
+    writeRegister(REG_BIOZ_MUX_CONFIG_4, BIOZ_MUX_CONFIG_4);
+    writeRegister(REG_LEAD_BIAS_CONFIG_1, LEAD_BIAS_CONFIG_1);
+    // Program FIFO_A_FULL for INT Pin
+    writeRegister(REG_FIFO_CONFIG_1,0xFA); // 6 Points triggers INT  
+    // Enable PLL  
+    writeRegister(REG_PLL_CONFIG_1, PLL_CONFIG_1);
+    // Wait for PLL to lock
+    delay(10); //May need to change depending on PLL settings
+    // Enable Bioz
+    writeRegister(REG_BIOZ_CONFIG_1, BIOZ_CONFIG_1);
+    // Broadcast TIMING_SYS_RESET
+    writeRegister(REG_SYS_SYNC, 0x80);
+
+    return;
+}
+
+void sync(void){
+  writeRegister(REG_SYS_SYNC, 0x80);
+  return;
+}
 
 // Read specified register and return 8-bit value
 //  Inputs: address of register to read (uint8)

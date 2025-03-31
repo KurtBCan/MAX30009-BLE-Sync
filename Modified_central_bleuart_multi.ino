@@ -51,6 +51,7 @@
  */
 
 #include <bluefruit.h>
+#include <string.h>
 
 // Struct containing peripheral info
 typedef struct
@@ -84,6 +85,10 @@ uint8_t STATE = 0;
 volatile uint16_t FIFOcount = 0;
 volatile uint32_t receivedData[256];
 
+bool rx1 = false;
+bool rx2 = false;
+
+String syncSTR = "SYNC";
 
 void setup() 
 {
@@ -283,6 +288,20 @@ void bleuart_rx_callback(BLEClientUart& uart_svc)
             // else if(receivedStr == "MAX 2 Complete!"){
             //   sendAll("1");
             // }
+            if (receivedStr == "MAX 1 Complete!"){
+              rx1 = true;
+            }
+            else if(receivedStr == "MAX 2 Complete!"){
+              rx2 = true;
+            }
+
+            if( (rx1 == true) && (rx2 == true) ){
+              char txBuffer[21] = {0};  // Extra space for null-terminator
+              strncpy((char *)txBuffer, syncSTR.c_str(), syncSTR.length());
+              sendAll(txBuffer);
+              rx1 = false;
+              rx2 = false;
+            }
         }
     }
 }
