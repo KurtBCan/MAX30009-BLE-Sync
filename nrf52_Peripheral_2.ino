@@ -152,7 +152,7 @@ void setup() {
 ///////////////////////////////////////////////////////////////////////////////////
   // Speed up connections
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);  // Maximize MTU
-  Bluefruit.Periph.setConnInterval(24, 48);
+  Bluefruit.Periph.setConnInterval(6, 12);
   Bluefruit.setTxPower(8);
   ///////////////////////////////////////////////////////////////////////////////////
 
@@ -177,7 +177,7 @@ void setup() {
   // SPI Init //
   //////////////
 
-  pinMode(SPI_MISO, INPUT_PULLDOWN);  // Explicitly set pulldown
+  // pinMode(SPI_MISO, INPUT_PULLDOWN);  // Explicitly set pulldown
   // set LED pin to output mode
   pinMode(ledPin, OUTPUT);
   pinMode(extLED, OUTPUT);
@@ -339,19 +339,12 @@ void loop() {
         interruptFlag = false; // Reset the flag
         // Begin Data Collection
         onAfeInt();
-        // if(priority = 1){
-        //  printDataBluetooth(buf);
-        // sendDataBLE();
-      //  while ( TURN != 2 ) {
-      //     // delayMicroseconds(5);
-      //   } 
-        sendTextMessage("MAX 2 Start!");
-        sendDataCount();
-        sendData();
-        sendTextMessage("MAX 2 Complete!");
-        TURN = 1;
-        // }
-        //printData(count);
+        while ( TURN == 1 ); // Loop until turn is 2
+          sendTextMessage("MAX 2 Start!");
+          sendDataCount();
+          sendData();
+          sendTextMessage("MAX 2 Complete!");
+          TURN = 1;
         iterationCnt += 1;
       }
 
@@ -452,15 +445,16 @@ void rx_callback(uint16_t conn_handle) {
         else if (receivedStr == "SYNC") {
             // Serial.println("Processing SYNC command...");
             STATE = STATE_SYNC;
+            TURN = 1;
         }
-        // else if (receivedStr == "2") {
-        //     Serial.println("Turn 2");
-        //     TURN = 2;
-        // }
-        // else if (receivedStr == "1") {
-        //     Serial.println("Turn 1");
-        //     TURN = 1;
-        // }
+        else if (receivedStr == "2") {
+            // Serial.println("Turn 2");
+            TURN = 2;
+        }
+        else if (receivedStr == "1") {
+            // Serial.println("Turn 1");
+            TURN = 1;
+        }
         else {
             Serial.println("Unknown command.");
             // Serial.println(receivedStr);
@@ -775,7 +769,7 @@ void sendDataCount() {
     uint16_t temp_count = FIFOcount; // Copy volatile value to non-volatile
     memcpy(&buffer[1], &temp_count, 2);  // Use 2 bytes for uint16_t
     bleuart.write(buffer, 5);
-    // delay(10);  // Ensure reliable transmission
+    delay(10);  // Ensure reliable transmission
 }
 
 // Send sensor data with header 0x02
@@ -794,7 +788,7 @@ void sendData() {
         }
 
         bleuart.write(buffer, 1 + chunk_size * 3);
-        // delay(10);
+        delay(10);
     }
 }
 
