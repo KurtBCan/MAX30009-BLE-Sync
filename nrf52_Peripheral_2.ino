@@ -84,6 +84,8 @@ uint8_t STATE = 0;
 #define STATE_START 1
 #define STATE_SYNC  2
 #define STATE_STOP  3
+#define STATE_WAITFORSYNC  4
+#define STATE_DATA 5
 
 volatile uint8_t TURN = 1;
 
@@ -126,8 +128,23 @@ volatile uint16_t FIFOcount;
 volatile uint8_t rxByte[3];	// array to store register reads
 
 volatile bool interruptFlag = false; // Flag to indicate interrupt
+volatile bool syncedFlag = true; // Flag to indicate synchronization
 
 const uint8_t headerMarker[2] = { 0xAA, 0x55 }; // Unique header
+
+
+
+// SYNC UUIDs
+BLEUuid syncServiceUuid("12345678-1234-5678-1234-56789abcdef0");
+BLEUuid syncCharUuid("12345678-1234-5678-1234-56789abcdef1");
+
+// SYNC BLE Client interfaces
+BLEClientService syncClientService("12345678-1234-5678-1234-56789abcdef0");
+BLEClientCharacteristic syncChar("12345678-1234-5678-1234-56789abcdef1");
+
+
+///////////////////////////////////////////////////////////////////////////////
+
 
 void setup() {
   Serial.begin(115200);
@@ -217,6 +234,14 @@ void setup() {
   // Serial.print("MTU Set to: ");
   // Serial.println(mtu);
 
+  // Start scanning for SYNC broadcasts from controller
+  Bluefruit.Scanner.setRxCallback(scan_callback);
+  // Bluefruit.Scanner.setInterval(160, 80);  // 100ms interval, 50ms window
+  Bluefruit.Scanner.setInterval(16, 16);  // 10ms interval, 10ms window
+  Bluefruit.Scanner.useActiveScan(false);
+  Bluefruit.Scanner.start(0);  // Scan forever
+
+
 }
 
   ////////////////////////////////////
@@ -225,6 +250,8 @@ void setup() {
 
 void startAdv(void)
 {
+  Bluefruit.Advertising.stop();
+  Bluefruit.Advertising.clearData();
   // Advertising packet
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
   Bluefruit.Advertising.addTxPower();
@@ -271,8 +298,6 @@ void printAll(uint8_t* buf, int count)
 // ************************************************************
 
 void loop() {
-
-
   // for(int loopVal= 1; loopVal<11; loopVal++){
   //   if( bleuart.available() ){
   //     // DateTime now = rtc.now(); 
@@ -309,7 +334,7 @@ void loop() {
     Serial.println("Regs Configured");
     // strncpy((char *)buf, setupComplete.c_str(), setupComplete.length());
     // printAll(buf, setupComplete.length());
-    sendTextMessage("Setup Complete!");
+    // sendTextMessage("Setup Complete!");
 
     digitalWrite(ledPin, HIGH);  // LED OFF
     //digitalWrite(OUTPUT_PIN, LOW);  // LED OFF
@@ -322,10 +347,14 @@ void loop() {
     char hexVal[3]; // Buffer to hold the hexadecimal string
     measurementSetup();
 
+    Serial.println("Measurement Setup Complete!");
+
     iterationCnt = 0;
     dataError = 0;
     //while (dataError != 1)
     //while (iterationCnt != 1)
+    STATE = STATE_DATA;
+    interruptFlag = false;
     while (1)
     {
       if(STATE == STATE_STOP){
@@ -333,21 +362,47 @@ void loop() {
       }
       else if(STATE == STATE_SYNC){
         sync();
-        STATE = STATE_START;
+        // Serial.println("Synced!");
+        STATE = STATE_DATA;
+        // syncedFlag = true;
+        // Serial.println("Synced");
+        // sendTextMessage("SYNCED 2");
       }
-      if (interruptFlag) {
-        interruptFlag = false; // Reset the flag
-        // Begin Data Collection
-        onAfeInt();
-        while ( TURN == 1 ); // Loop until turn is 2
-          sendTextMessage("MAX 2 Start!");
-          sendDataCount();
-          sendData();
-          sendTextMessage("MAX 2 Complete!");
-          TURN = 1;
-        iterationCnt += 1;
+      else if(STATE == STATE_DATA){
+      //if(syncedFlag){
+        if (interruptFlag) {
+          // syncedFlag = false;
+          interruptFlag = false; // Reset the flag
+          // Begin Data Collection
+          onAfeInt();
+          //syncedFlag = false;
+          // while ( TURN == 1 ); // Loop until turn is 2
+          // interruptFlag = false; // Reset the flag
+            // sendTextMessage("MAX 2 Start!");
+            // sendDataCount();          
+          if(dataError != 1){
+            // delay(2);
+            sendData();
+            // sendTextMessage("MAX 1 Complete!");
+            // TURN = 2;
+            iterationCnt += 1;
+            // interruptFlag = false; // Reset the flag
+            STATE = STATE_WAITFORSYNC;
+          }
+          else if (dataError == 1){
+            delay(10);
+            interruptFlag = true;
+            dataError = 0;
+          }
+        }
+      }
+      else if( STATE == STATE_WAITFORSYNC){
+        delay(5);
       }
 
+      // while(STATE = STATE_WAITFORSYNC);
+      //}
+      delay(1); // May not want this long term;
     }
   }
 // }
@@ -381,6 +436,28 @@ void connect_callback(uint16_t conn_handle)
   connection_count++;
   Serial.print("Connection count: ");
   Serial.println(connection_count);
+
+
+  // if (!syncClientService.discover(conn_handle)) {
+  //   Serial.println("Sync service not found. Disconnecting.");
+  //   Bluefruit.disconnect(conn_handle);
+  //   return;
+  // }
+
+  // Serial.println("Sync service found. Discovering characteristic...");
+
+  // if (!syncChar.discover()) {
+  //   Serial.println("Sync characteristic not found. Disconnecting.");
+  //   Bluefruit.disconnect(conn_handle);
+  //   return;
+  // }
+
+  // Serial.println("Enabling sync notify...");
+  // if (!syncChar.enableNotify()) {
+  //   Serial.println("Couldn't enable notify.");
+  // } else {
+  //   Serial.println("Sync notify enabled.");
+  // }
   
   // // Keep advertising if not reaching max
   // if (connection_count < MAX_PRPH_CONNECTION)
@@ -406,27 +483,30 @@ void disconnect_callback(uint16_t conn_handle, uint8_t reason)
   connection_count--;
 }
 
+void scan_callback(ble_gap_evt_adv_report_t* report) {
+  uint8_t* data = report->data.p_data;
+  uint8_t len = report->data.len;
+
+  // Look for a SYNC packet in manufacturer data
+  for (int i = 0; i < len;) {
+    uint8_t field_len = data[i];
+    if (field_len == 0) break;
+    uint8_t type = data[i + 1];
+
+    if (type == BLE_GAP_AD_TYPE_MANUFACTURER_SPECIFIC_DATA && field_len >= 4) {
+      if (data[i + 2] == 'S' && data[i + 3] == 'Y' &&
+          data[i + 4] == 'N' && data[i + 5] == 'C') {
+        Serial.println("SYNC received from controller!");
+        STATE = STATE_SYNC;  // Trigger measurement and send
+        break;
+      }
+    }
+
+    i += field_len + 1;
+  }
+}
 
 // RX Callback Function
-// void rx_callback(uint16_t conn_handle) {
-//     static uint8_t index = 0;
-
-//     while (bleuart.available()) {
-//         char c = bleuart.read();
-
-//         if (index < BUFFER_SIZE - 1) {
-//             receivedCommand[index++] = c;
-//         }
-
-//         if (c == '\n' || c == '\r') {
-//             receivedCommand[index] = '\0';  // Null-terminate string
-//             trimCommand(receivedCommand);   // Trim unwanted characters
-//             index = 0;
-//             commandReceived = true;
-//         }
-//     }
-// }
-
 void rx_callback(uint16_t conn_handle) {
     char buffer[32];
     int len = bleuart.read(buffer, sizeof(buffer) - 1);
@@ -445,23 +525,22 @@ void rx_callback(uint16_t conn_handle) {
         else if (receivedStr == "SYNC") {
             // Serial.println("Processing SYNC command...");
             STATE = STATE_SYNC;
-            TURN = 1;
+            // TURN = 1;
         }
-        else if (receivedStr == "2") {
-            // Serial.println("Turn 2");
-            TURN = 2;
-        }
-        else if (receivedStr == "1") {
-            // Serial.println("Turn 1");
-            TURN = 1;
-        }
+        // else if (receivedStr == "2") {
+        //     // Serial.println("Turn 2");
+        //     TURN = 2;
+        // }
+        // else if (receivedStr == "1") {
+        //     // Serial.println("Turn 1");
+        //     TURN = 1;
+        // }
         else {
-            Serial.println("Unknown command.");
+            // Serial.println("Unknown command.");
             // Serial.println(receivedStr);
         }
     }
 }
-
 //////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -587,6 +666,7 @@ void configureMAX_REGS()
     readRegister(REG_STATUS1,2);
 
     writeRegister(REG_FIFO_CONFIG_1, 0x7F);	// FIFO_A_FULL; assert A_FULL on NUM_SAMPLES_PER_INT samples   (AFE_FIFO_SIZE-NUM_SAMPLES_PER_INT)
+    // writeRegister(REG_FIFO_CONFIG_1,0xE2); // 30 Points triggers INT 
 
     writeRegister(REG_SYS_CONFIG_1, SYS_CONFIG_1);
     writeRegister(REG_PIN_FUNC_CONFIG, PIN_FUNC_CONFIG);
@@ -625,7 +705,6 @@ void configureMAX_REGS()
 void measurementSetup(void)
 {
     // 1. Write default values to registers
-
     readRegister(REG_BIOZ_CONFIG_1);
     //delayMicroseconds(5);
     readRegister(REG_PLL_CONFIG_4);
@@ -635,21 +714,25 @@ void measurementSetup(void)
     readRegister(REG_BIOZ_CONFIG_1);
     //delayMicroseconds(5);
     writeRegister(REG_FIFO_CONFIG_1,0xFA); // 6 Points triggers INT
+    // writeRegister(REG_FIFO_CONFIG_1,0xE2); // 30 Points triggers INT 
+
     // writeRegister(REG_FIFO_CONFIG_1,0x80); // 128 Points triggers INT
     //delayMicroseconds(5);
     readRegister(REG_BIOZ_CONFIG_1);
     //delayMicroseconds(5);
-    writeRegister(REG_BIOZ_CONFIG_1,0xF4);
+    // writeRegister(REG_BIOZ_CONFIG_1,0xF4);
+    writeRegister(REG_BIOZ_CONFIG_1,0x74);
     //delayMicroseconds(5);
     readRegister(REG_FIFO_CONFIG_2);
     //delayMicroseconds(5);
-    writeRegister(REG_FIFO_CONFIG_2,0x1A);
+    writeRegister(REG_FIFO_CONFIG_2,0x1A);  // Flush FIFO
     //delayMicroseconds(5);
     readRegister(REG_SYS_CONFIG_1);
     //delayMicroseconds(5);
     writeRegister(REG_SYS_CONFIG_1,0x00);
     //delayMicroseconds(5);
-    writeRegister(REG_BIOZ_CONFIG_1,0xF5);
+    // writeRegister(REG_BIOZ_CONFIG_1,0xF5);
+    writeRegister(REG_BIOZ_CONFIG_1,0x77);
     //delayMicroseconds(5);
     readRegister(REG_FIFO_CONFIG_2);
     //delayMicroseconds(5);
@@ -682,7 +765,8 @@ void endCollection(void)
       // End Collection
     readRegister(REG_BIOZ_CONFIG_1);
     //delayMicroseconds(5);
-    writeRegister(REG_BIOZ_CONFIG_1,0xF4);
+    // writeRegister(REG_BIOZ_CONFIG_1,0xF4);
+    writeRegister(REG_BIOZ_CONFIG_1,0x74);
     //delayMicroseconds(5);
     readRegister(REG_FIFO_CONFIG_2);
     //delayMicroseconds(5);
@@ -692,7 +776,8 @@ void endCollection(void)
     //delayMicroseconds(5);
     writeRegister(REG_SYS_CONFIG_1,0x02);
     //delayMicroseconds(5);
-    writeRegister(REG_BIOZ_CONFIG_1,0xF5);
+    // writeRegister(REG_BIOZ_CONFIG_1,0xF5);
+    writeRegister(REG_BIOZ_CONFIG_1,0x77);
     //delayMicroseconds(5);
     readRegister(REG_FIFO_CONFIG_2);
     //delayMicroseconds(5);
@@ -769,28 +854,53 @@ void sendDataCount() {
     uint16_t temp_count = FIFOcount; // Copy volatile value to non-volatile
     memcpy(&buffer[1], &temp_count, 2);  // Use 2 bytes for uint16_t
     bleuart.write(buffer, 5);
-    delay(10);  // Ensure reliable transmission
+    delay(1);  // Ensure reliable transmission
 }
 
 // Send sensor data with header 0x02
 void sendData() {
-    uint8_t buffer[19];  // 1-byte header + 6 × 24-bit values
-    buffer[0] = 0x02;
+  const uint8_t header = 0x02;
+  uint16_t temp_count = FIFOcount; // Copy volatile COUNT value
+  const int total_data_bytes = temp_count * 3;
 
-    for (int i = 0; i < FIFOcount; i += 6) {
-        int chunk_size = min(6, FIFOcount - i);  // Handle remaining data
+  uint8_t buffer[20];
+  int data_index = 0;
 
-        for (int j = 0; j < chunk_size; j++) {
-            uint32_t value = BiozFifoBurstValues[i + j] & 0xFFFFFF;
-            buffer[1 + j * 3] = value & 0xFF;
-            buffer[2 + j * 3] = (value >> 8) & 0xFF;
-            buffer[3 + j * 3] = (value >> 16) & 0xFF;
-        }
+  // ---- First packet: Header + COUNT + initial data ----
+  buffer[0] = header;
+  buffer[1] = temp_count & 0xFF;
+  buffer[2] = (temp_count >> 8) & 0xFF;
 
-        bleuart.write(buffer, 1 + chunk_size * 3);
-        delay(10);
+  int bytes_available = 20 - 3;
+  int num_values = min(bytes_available / 3, temp_count);
+  for (int i = 0; i < num_values; i++) {
+    uint32_t val = BiozFifoBurstValues[i] & 0xFFFFFF;
+    buffer[3 + i * 3 + 0] = val & 0xFF;
+    buffer[3 + i * 3 + 1] = (val >> 8) & 0xFF;
+    buffer[3 + i * 3 + 2] = (val >> 16) & 0xFF;
+  }
+
+  bleuart.write(buffer, 3 + num_values * 3);
+  delay(1); // Optional pacing
+
+  data_index += num_values;
+
+  // ---- Remaining packets: pure data (3 bytes per value) ----
+  while (data_index < temp_count) {
+    int chunk_values = min((int)((sizeof(buffer)) / 3), temp_count - data_index);
+    for (int i = 0; i < chunk_values; i++) {
+      uint32_t val = BiozFifoBurstValues[data_index + i] & 0xFFFFFF;
+      buffer[i * 3 + 0] = val & 0xFF;
+      buffer[i * 3 + 1] = (val >> 8) & 0xFF;
+      buffer[i * 3 + 2] = (val >> 16) & 0xFF;
     }
+
+    bleuart.write(buffer, chunk_values * 3);
+    delay(1); // Optional pacing
+    data_index += chunk_values;
+  }
 }
+
 
 // Send text messages with header 0x03
 void sendTextMessage(const char* msg) {
@@ -803,7 +913,7 @@ void sendTextMessage(const char* msg) {
         memcpy(&buffer[1], msg + i, chunk_size);
 
         bleuart.write(buffer, 1 + chunk_size);
-        delay(10);
+        delay(1);
     }
 }
 
@@ -836,7 +946,7 @@ void onAfeInt(void)	// call this on AFE interrupt
   // count = ((rxByte[0]&0b1000)<<1)|rxByte[1];	// FIFO_DATA_COUNT should be equal to NUM_SAMPLES_PER_INT
   readRegister(REG_FIFO_CTR_1, 2);
   FIFOcount = rxByte[1];
-  Serial.println(FIFOcount);
+  // Serial.println(FIFOcount);
 	// read FIFO_DATA
   // if(FIFOcount == 0){
   //   readRegister(REG_FIFO_DATA,255); // Dummy fix
@@ -844,5 +954,7 @@ void onAfeInt(void)	// call this on AFE interrupt
   // else{
 	  readRegister(REG_FIFO_DATA,FIFOcount);
   // }
+  // readRegister(REG_STATUS1, 2);
+
   return;
 }
