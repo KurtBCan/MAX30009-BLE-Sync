@@ -1,4 +1,5 @@
 #include <bluefruit.h>
+#include <set>
 
 // UUIDs must match those on the peripheral
 #define SERVICE_UUID   "12145678-1234-5678-1234-56789abcdef0"
@@ -14,6 +15,9 @@ BLEDis bledis;    // DIS (Device Information Service) helper class instance
 BLEBas blebas;    // BAS (Battery Service) helper class instance
 
 int connection_num = 0;
+
+std::set<uint16_t> dataReceivedHandles;  // Track conn_handles that sent data
+bool allDataReceived = false;
 
 // BLEAdvertising syncAdv;  // create a second advertiser
 
@@ -159,7 +163,8 @@ void setupService(void)
 
 void loop() {
   // Forward user commands over BLE to peripheral
-  if (Serial.available() > 0) {
+  if (Serial.available() > 0) 
+  {
     String msg = Serial.readStringUntil('\n');
     msg.trim();  // Remove newline, carriage return, etc.
     if (msg.length()) 
@@ -174,7 +179,8 @@ void loop() {
       // memcpy(data, msg.c_str(), len);
 
       // Send Notify to every connected device
-      for (uint8_t conn_idx = 0; conn_idx < connection_num; conn_idx++) {
+      for (uint8_t conn_idx = 0; conn_idx < connection_num; conn_idx++) 
+      {
         uint16_t conn_handle = conn_idx;
         if (sampleChar.notify(conn_handle, msgData, msg.length() + 1)) // Message + null terminator
         {
@@ -189,6 +195,29 @@ void loop() {
       }
     }
 
+  }
+  else if (allDataReceived){
+    allDataReceived = false;
+    String msgSync = "SYNC";
+    msgSync.trim();  // Remove newline, carriage return, etc.
+    // Ensure that we only send the relevant part of the message
+    uint8_t msgDataSync[msgSync.length() + 1];  // +1 for null-terminator
+    msgSync.toCharArray((char*)msgDataSync, msgSync.length() + 1);  // Copy string with null-terminator
+    // Send Notify to every connected device
+    for (uint8_t conn_idx = 0; conn_idx < connection_num; conn_idx++) 
+    {
+      uint16_t conn_handle = conn_idx;
+      if (sampleChar.notify(conn_handle, msgDataSync, msgSync.length() + 1)) // Message + null terminator
+      {
+        Serial.print("Sent notify to conn_handle ");
+        Serial.print(conn_handle);
+        Serial.print(": ");
+        Serial.println(msgSync);
+      } else {
+        Serial.print("Failed to send notify to conn_handle ");
+        Serial.println(conn_handle);
+      }
+    }
   }
 }
 
@@ -259,7 +288,7 @@ void cccd_callback(uint16_t conn_hdl, BLECharacteristic* chr, uint16_t cccd_valu
 // Handle incoming WRITE data (previously notifyCallback)
 void write_callback(uint16_t conn_hdl, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
   int total_bytes = 0;
-  static uint8_t myData[20]; // Adjust size if necessary
+  static uint8_t myData[200]; // Adjust size if necessary
 
   Serial.print("Write received from conn_handle ");
   Serial.print(conn_hdl);
@@ -282,6 +311,15 @@ void write_callback(uint16_t conn_hdl, BLECharacteristic* chr, uint8_t* data, ui
     Serial.print(" ");
   }
   Serial.println();
+
+  // Track who sent data
+  dataReceivedHandles.insert(conn_hdl);
+
+  // Check if all connected devices have sent data
+  if (dataReceivedHandles.size() == 2) {
+    allDataReceived = true;
+    Serial.println("Data Received!");
+  }
 }
 
 

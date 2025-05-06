@@ -229,18 +229,18 @@ void loop() {
 
   switch (STATE){
     case STATE_WAIT:
-      delay(10);
+      // delay(10);
       break;
     case STATE_START:
       delay(2000);
 
-      // endCollection();
+      endCollection();
       // if the remote device wrote to the characteristic,
       // use the value to control the LED:
 
       Serial.println("BLEUART Available.");
 
-      // configureMAX_REGS(); // Configure REGS
+      configureMAX_REGS(); // Configure REGS
       Serial.println("Regs Configured");
       // strncpy((char *)buf, setupComplete.c_str(), setupComplete.length());
       // printAll(buf, setupComplete.length());
@@ -255,7 +255,7 @@ void loop() {
       Serial.println("Sweeping BIOZ");
 
       char hexVal[3]; // Buffer to hold the hexadecimal string
-      // measurementSetup();
+      measurementSetup();
 
       Serial.println("Measurement Setup Complete!");
 
@@ -271,15 +271,15 @@ void loop() {
       STATE = STATE_DATA;
       break;
     case STATE_DATA:
-      while(!interruptFlag){
-        delay(100);
-        interruptFlag = true;
-      }
+      while(!interruptFlag); //{
+      //   delay(100);
+      //   interruptFlag = true;
+      // }
       if (interruptFlag) {
         interruptFlag = false; // Reset the flag
         // Begin Data Collection
 
-        //onAfeInt();
+        onAfeInt();
 
         //syncedFlag = false;
         // while ( TURN == 2 ); // Loop until turn is 1
@@ -287,14 +287,14 @@ void loop() {
           // sendTextMessage("MAX 1 Start!");
           // sendDataCount();
         if(dataError != 1){
-          delay(10);
+          // delay(10);
           sendData();
           // delay(2);
           // sendTextMessage("MAX 1 Complete!");
           // TURN = 2;
           iterationCnt += 1;
           // interruptFlag = false; // Reset the flag
-          // STATE = STATE_WAITFORSYNC;
+          STATE = STATE_WAITFORSYNC;
           break;
         }
         else if (dataError == 1){
@@ -305,7 +305,7 @@ void loop() {
         }
       }
     case STATE_WAITFORSYNC:
-      delay(5);
+      // delay(5);
       break;
 
     case STATE_STOP:
@@ -761,15 +761,9 @@ void endCollection(void)
 
 // Send data function
 void sendData() {
-  uint16_t temp_count = 6;
+  uint16_t temp_count = FIFOcount;
   uint8_t header = 0x02;
   int total_bytes = 0;
-  BiozFifoBurstValues[0] = 0x101010;
-  BiozFifoBurstValues[1] = 0x202020;
-  BiozFifoBurstValues[2] = 0x101010;
-  BiozFifoBurstValues[3] = 0x202020;
-  BiozFifoBurstValues[4] = 0x101010;
-  BiozFifoBurstValues[5] = 0x202020;
 
   if ( Bluefruit.connected() ) {
     uint8_t packet[20] = {0};
@@ -778,7 +772,7 @@ void sendData() {
     packet[1] = temp_count & 0xFF;
     total_bytes = 2;
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < FIFOcount; i++) {
       uint32_t val = BiozFifoBurstValues[i] & 0xFFFFFF;
       packet[total_bytes++] = val & 0xFF;
       packet[total_bytes++] = (val >> 8) & 0xFF;
